@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "tweet_analytics"
+version = "0.1.0"
+description = ""
+authors = ["david-fortini <fortini.david@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+twython = "^3.9.1"
+nltk = "^3.6.4"
+atomicwrites = "^1.4.0"
+boto3 = "^1.18.53"
+streamlit = "^0.89.0"
+streamlit-aggrid = "^0.2.2"
+awscli = "^1.20.53"
+psycopg2-binary = "^2.9.1"
+
+[tool.poetry.dev-dependencies]
+pytest = "^5.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
