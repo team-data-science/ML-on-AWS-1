@@ -1,6 +1,38 @@
 # ML-on-AWS-1
 Repo for the ML on AWS 1 course
 
+## Postgres 
+create the table with
+```sql
+CREATE TABLE tweets_analytics(
+	author varchar(50),
+	timestamp timestamp with time zone,
+	text varchar(300),
+	sentiment_score double precision,
+	PRIMARY KEY(author, timestamp)
+	)
+```
+
+## K-Layers
+Go to `Function Overview > Layers > Add a layer` 
+![](assets/lambda-layers.png)
+Under `Choose a layer > Specify an ARN` and add the following:
+
+`arn:aws:lambda:eu-central-1:770693421928:layer:Klayers-python38-nltk:47` 
+`arn:aws:lambda:eu-central-1:770693421928:layer:Klayers-python38-pytz:5` 
+`arn:aws:lambda:eu-central-1:770693421928:layer:Klayers-python38-pandas:37` 
+
+if you are in a different region (i.e. `us-east-1`), replace the region name. If that gives error,
+ look up the layer exist, by replacing your region in the url below
+
+`https://api.klayers.cloud/api/v1/layers/latest/{region}/{layer-name}` 
+
+Example: 
+
+https://api.klayers.cloud/api/v1/layers/latest/us-east-1/pytz 
+
+https://api.klayers.cloud/api/v1/layers/latest/us-east-1/nltk 
+
 
 ## Local setup
 Not necessary but if we students want to run code locally it would be better to create a virtual environment with `conda` and install the following
