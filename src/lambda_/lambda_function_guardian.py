@@ -36,7 +36,7 @@ except LookupError:
 
 def _time_parser(publication_time: str) -> datetime:
     '''
-    Parse string from twitter api like 'Sat Sep 02 14:25:02 +0000 2021'
+    Parse string from Guardian api like '2024-06-10T10:46:19Z'
     to a datetime object in utc time
     '''
     return parser.parse(publication_time)
