@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Lambda code that pulls tweets in and saves them to s3 and to a DB
+Lambda code that pulls posts from Guardian API in and saves them to s3 and to a DB
 """
 
 from dateutil import parser
@@ -10,6 +10,7 @@ import logging
 import json
 import os
 import pytz
+import requests
 from typing import Optional
 
 from botocore.exceptions import ClientError
@@ -18,7 +19,7 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 import pandas as pd
 import psycopg2
 import psycopg2.extras
-from twython import Twython
+
 
 
 try:
@@ -33,38 +34,38 @@ except LookupError:
     sia = SentimentIntensityAnalyzer()
 
 
-def _time_parser(twitter_time: str) -> datetime:
+def _time_parser(publication_time: str) -> datetime:
     '''
     Parse string from twitter api like 'Sat Sep 02 14:25:02 +0000 2021'
     to a datetime object in utc time
     '''
-    return parser.parse(twitter_time)
+    return parser.parse(publication_time)
 
 
-def is_recent(tweet: dict,
+def is_recent(guardian_post: dict,
               max_time_interval_minutes: int = 5) -> bool:
     '''
-    a tweet is recent if it is posted in the last x minutes'
+    a post is recent if it is posted in the last x minutes'
     '''
-    time_created = _time_parser(tweet['created_at'])
+    time_created = _time_parser(guardian_post['webPublicationDate'])
     now = datetime.now(tz=pytz.UTC)
     # converts time to minutes as the function takes minutes as argument
     seconds_diff = (now-time_created).seconds
     minutes_diff = seconds_diff/60
-    is_recent_tweet = minutes_diff <= max_time_interval_minutes
-    return is_recent_tweet
+    is_recent_post = minutes_diff <= max_time_interval_minutes
+    return is_recent_post
 
 
-def extract_fields(tweet: dict) -> dict:
+def extract_fields(guardian_post: dict) -> dict:
     '''
-    Arbitrary decision to save only some fields of the tweet,
+    Arbitrary decision to save only some fields of the post,
     store them in a different dictionary form which
     is convenient for saving them later
     '''
-    author = tweet['user']['screen_name']
-    time_created = _time_parser(tweet['created_at'])
-    text = tweet['text']
-    return dict(author=author,timestamp=time_created, text=text)
+    #TODO: removed the author field as it is not present in the guardian api
+    time_created = _time_parser(guardian_post['webPublicationDate'])
+    text = guardian_post['webTitle']
+    return dict(timestamp=time_created, text=text)
 
 
 def _get_sentiment(string: str) -> float:
@@ -78,9 +79,9 @@ def _get_sentiment(string: str) -> float:
     score = score['neg'] * -1 + score['pos']
     return score
 
-def add_sentiment_score(tweet: dict) -> dict:
-    tweet['sentiment_score'] = _get_sentiment(tweet['text'])
-    return tweet
+def add_sentiment_score(guardian_post: dict) -> dict:
+    guardian_post['sentiment_score'] = _get_sentiment(guardian_post['text'])
+    return guardian_post
 
 
 def upload_file_to_s3(local_file_name: str,
@@ -119,17 +120,17 @@ def get_db_connection() -> psycopg2.extensions.connection:
     return conn
 
 
-def convert_timestamp_to_int(tweet: dict) ->dict:
+def convert_timestamp_to_int(guardian_post: dict) ->dict:
     '''datetime object are not serializable for json,
     so we need to convert them to unix timestamp'''
-    tweet = tweet.copy()
-    tweet['timestamp'] = tweet['timestamp'].timestamp()
-    return tweet
+    guardian_post = guardian_post.copy()
+    guardian_post['timestamp'] = guardian_post['timestamp'].timestamp()
+    return guardian_post
 
 
 def insert_data_in_db(df: pd.DataFrame,
                       conn: psycopg2.extensions.connection,
-                      table_name: str = 'tweets_analytics') -> None:
+                      table_name: str = 'guardian_posts_analytics') -> None:
     # you need data and a valid connection to insert data in DB
     are_data = len(df) > 0
     if are_data and conn is not None:
@@ -178,37 +179,42 @@ def lambda_handler(event, context):
 
         # take the environment variables
         S3_BUCKET_NAME = os.environ['S3_BUCKET_NAME']
-        python_tweets = Twython(os.environ['TWITTER_API_KEY'],
-                                os.environ['TWITTER_API_SECRET'])
-        # we decided to follow reuters. You can put something else too =)
-        query = {'screen_name': 'reuters'}
-        tweets = python_tweets.get_user_timeline(**query)
-        # only take recent tweets
-        recent_tweets = [tweet for tweet in tweets
-                         if is_recent(tweet)]   
-        # format tweets
-        recent_tweets = [extract_fields(tweet) for tweet in recent_tweets]
-        # add sentiment to tweets
-        recent_tweets = [add_sentiment_score(tweet) for tweet in recent_tweets]
+        # get guardian posts
+        BASE_URL = 'https://content.guardianapis.com/search'
+        params = {'api-key': os.environ['GUARDIAN_API_KEY'],
+                  'order-by': 'newest',
+                  'page-size': 10,
+                  'page': 1,
+                  'q': '' # put any query you want here like "news", we live it empty in the beginning
+                  }
+        guardian_request = requests.get(BASE_URL, params=params)
+        guardian_posts = guardian_request.json()['response']['results']
+        # only take recent posts
+        recent_guardian_posts = [guardian_post for guardian_post in guardian_posts
+                         if is_recent(guardian_post)]   
+        # format posts
+        recent_guardian_posts = [extract_fields(guardian_post) for guardian_post in recent_guardian_posts]
+        # add sentiment to posts
+        recent_guardian_posts = [add_sentiment_score(guardian_post) for guardian_post in recent_guardian_posts]
         # create a filename with datetime timestamp
         now_str = datetime.now(tz=pytz.UTC).strftime('%d-%m-%Y-%H:%M:%S')
         filename = f'{now_str}.json'
         output_path_file = f'/tmp/{filename}'
         # in lambda files need to be dumped into /tmp folder
         with open(output_path_file, 'w') as fout:
-            tweets_to_save = [convert_timestamp_to_int(tweet)
-                              for tweet in recent_tweets]
-            json.dump(tweets_to_save , fout)
+            posts_to_save = [convert_timestamp_to_int(guardian_post)
+                              for guardian_post in recent_guardian_posts]
+            json.dump(posts_to_save , fout)
         upload_file_to_s3(local_file_name=output_path_file,
                           bucket=S3_BUCKET_NAME,
                           s3_object_name=f'raw-messages/{filename}')
 
-        tweets_df = pd.DataFrame(recent_tweets)
+        guardian_post_df = pd.DataFrame(recent_guardian_posts)
         conn = get_db_connection()
-        insert_data_in_db(df=tweets_df, conn=conn, table_name='tweets_analytics')
+        insert_data_in_db(df=guardian_post_df, conn=conn, table_name='guardian_posts_analytics')
     except Exception as e:
         logging.exception('Exception occured \n')
-    # add_messages_to_db(df=tweets_df, conn=conn)
+    # add_messages_to_db(df=guardian_post_df, conn=conn)
     print('Lambda executed succesfully!')
 
 
